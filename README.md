@@ -42,6 +42,45 @@ Run the test suite:
 npm test
 ```
 
+## Deploy it to the web
+
+The app is a single Node server, so it runs anywhere that runs a container. The
+one important detail is a **persistent disk/volume** for the SQLite file
+(`/data/trips.db`) so trips survive restarts and redeploys. Configs for the most
+common hosts are included.
+
+### Option A — Render (easiest, click-based)
+
+1. Push this repo to GitHub (already done if you're reading this there).
+2. In Render: **New + → Blueprint**, pick this repo. Render reads
+   [`render.yaml`](./render.yaml) and provisions the service plus a 1 GB disk.
+3. Click apply. You get a public `https://…onrender.com` URL to share.
+
+> Render's **free** instance type has no persistent disk, so to keep data you need
+> the **Starter** plan (~$7/mo), which `render.yaml` selects. To trial for free,
+> delete the `disk:` block and `plan:` line — trips will just reset on redeploy.
+
+### Option B — Fly.io (free tier includes a volume)
+
+```bash
+fly launch --no-deploy --copy-config --name <your-unique-name>
+fly volumes create trip_data --size 1 --region iad
+fly deploy
+```
+
+[`fly.toml`](./fly.toml) is preconfigured; the app scales to zero when idle.
+
+### Option C — Docker (anywhere)
+
+```bash
+docker build -t triptogether .
+docker run -p 3000:3000 -v triptogether-data:/data triptogether
+# → http://localhost:3000
+```
+
+The named volume `triptogether-data` keeps your database between runs. This same
+image is what Render (via the Dockerfile) and any VPS would run.
+
 ## How it works
 
 - **Backend** — Node + [Express](https://expressjs.com/) with a
