@@ -43,6 +43,9 @@ export function createApp({ dbFile } = {}) {
     }
   };
 
+  // Lightweight health check for the hosting platform — no DB / static deps.
+  app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'triptogether' }));
+
   const api = express.Router();
 
   // ---- trips -----------------------------------------------------------

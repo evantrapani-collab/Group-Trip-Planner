@@ -2,18 +2,35 @@ import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Pick a database file path, making sure its directory is writable. On hosts
+// without a mounted disk (e.g. Render's free plan) the configured path may not
+// be writable, so we fall back to a guaranteed-writable location rather than
+// crash-looping on startup.
+function resolveDbPath(file) {
+  const preferred = file ?? process.env.TRIP_DB ?? join(__dirname, '..', 'data', 'trips.db');
+  if (preferred === ':memory:') return preferred;
+  for (const candidate of [preferred, join(tmpdir(), 'triptogether', 'trips.db')]) {
+    try {
+      mkdirSync(dirname(candidate), { recursive: true });
+      return candidate;
+    } catch (err) {
+      console.warn(`Cannot use database path "${candidate}": ${err.message}`);
+    }
+  }
+  console.warn('Falling back to an in-memory database (data will not persist).');
+  return ':memory:';
+}
 
 /**
  * Create (or open) a TripTogether database.
  * Pass ':memory:' for tests, or a file path for persistence.
  */
 export function createDb(file) {
-  const dbPath = file ?? process.env.TRIP_DB ?? join(__dirname, '..', 'data', 'trips.db');
-  if (dbPath !== ':memory:') {
-    mkdirSync(dirname(dbPath), { recursive: true });
-  }
+  const dbPath = resolveDbPath(file);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
