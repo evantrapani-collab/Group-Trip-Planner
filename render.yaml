@@ -10,7 +10,7 @@ services:
     # sleeps after ~15 min idle (brief cold start on next visit) and has NO
     # persistent disk, so trips reset whenever the app redeploys/restarts.
     plan: free
-    healthCheckPath: /
+    healthCheckPath: /healthz
     # ── To keep trips permanently (for real use) ──────────────────────────
     # 1. change `plan: free` to `plan: starter`  (~$7/mo)
     # 2. uncomment the two lines below and the `disk:` block.
