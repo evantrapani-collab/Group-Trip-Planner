@@ -1,0 +1,21 @@
+{
+  "name": "triptogether",
+  "version": "1.0.0",
+  "description": "TripTogether — plan group trips together: vote on destinations, poll dates, budget, split expenses, build an itinerary, and share tasks.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "nanoid": "^5.0.9"
+  },
+  "license": "MIT"
+}

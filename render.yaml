@@ -1,0 +1,23 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In the Render dashboard: New + → Blueprint → connect this repo.
+# Render reads this file and provisions the service automatically.
+services:
+  - type: web
+    name: triptogether
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Free plan: great for testing. No credit card. Note that the instance
+    # sleeps after ~15 min idle (brief cold start on next visit) and has NO
+    # persistent disk, so trips reset whenever the app redeploys/restarts.
+    plan: free
+    healthCheckPath: /
+    # ── To keep trips permanently (for real use) ──────────────────────────
+    # 1. change `plan: free` to `plan: starter`  (~$7/mo)
+    # 2. uncomment the two lines below and the `disk:` block.
+    # envVars:
+    #   - key: TRIP_DB
+    #     value: /data/trips.db
+    # disk:
+    #   name: trip-data
+    #   mountPath: /data
+    #   sizeGB: 1
