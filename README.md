@@ -22,6 +22,24 @@ hops in with just their name.
 | ✅ **Tasks** | A shared to-do / packing checklist with assignments. |
 | 👥 **People** | See who's in, invite by link, add people manually. |
 
+## How we're different
+
+Group travel is a crowded market, but it's split in two: **planners**
+(Wanderlog, Troupe, TripIt) handle itineraries and polls, while **money apps**
+(Splitwise, Venmo) handle the bill. Most groups end up juggling one of each.
+
+TripTogether spans both — voting, dates, budget, settle-up, itinerary, and
+tasks in one place — and adds the thing none of them do:
+
+- **No accounts, no passwords, no install.** Share a 6-letter code, join with
+  just a name.
+- **All-in-one, including the settle-up math** that planners usually outsource.
+- **Free and self-hostable** — a single Node/SQLite container, not a SaaS tier.
+
+In short: *the no-signup, share-a-code app that replaces the planner + Splitwise
+combo for a single group trip.* See [COMPETITORS.md](./COMPETITORS.md) for the
+full market breakdown.
+
 ## Quick start
 
 ```bash
