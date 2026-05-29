@@ -49,16 +49,20 @@ one important detail is a **persistent disk/volume** for the SQLite file
 (`/data/trips.db`) so trips survive restarts and redeploys. Configs for the most
 common hosts are included.
 
-### Option A — Render (easiest, click-based)
+### Option A — Render (recommended, free, click-based)
 
 1. Push this repo to GitHub (already done if you're reading this there).
-2. In Render: **New + → Blueprint**, pick this repo. Render reads
-   [`render.yaml`](./render.yaml) and provisions the service plus a 1 GB disk.
-3. Click apply. You get a public `https://…onrender.com` URL to share.
+2. Sign in at [render.com](https://render.com) and choose **New + → Blueprint**.
+3. Pick this repo. Render reads [`render.yaml`](./render.yaml) and configures the
+   service for you on the **free** plan — no credit card needed.
+4. Click apply, wait for the first build (~2 min), and you get a public
+   `https://…onrender.com` URL to share with your group.
 
-> Render's **free** instance type has no persistent disk, so to keep data you need
-> the **Starter** plan (~$7/mo), which `render.yaml` selects. To trial for free,
-> delete the `disk:` block and `plan:` line — trips will just reset on redeploy.
+> The free plan is perfect for testing. Two caveats: the app sleeps after ~15 min
+> of inactivity (a few-second cold start on the next visit), and it has **no
+> persistent disk**, so trips reset whenever it redeploys. When you're ready for
+> real, lasting trips, follow the commented instructions in `render.yaml` to switch
+> to the Starter plan (~$7/mo) with a persistent disk.
 
 ### Option B — Fly.io (free tier includes a volume)
 
