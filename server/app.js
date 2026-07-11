@@ -21,7 +21,17 @@ const PALETTE = [
 export function createApp({ dbFile } = {}) {
   const db = createDb(dbFile);
   const app = express();
-  app.use(express.json());
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '64kb' }));
+
+  app.use((_req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+    });
+    next();
+  });
 
   // ---- helpers ---------------------------------------------------------
   const getTrip = (idOrCode) =>
@@ -106,28 +116,57 @@ export function createApp({ dbFile } = {}) {
     const t = trip.id;
     const members = tripMembers(t);
 
+    // Child rows are fetched in one query per table (not one per parent row)
+    // and grouped in memory, so the snapshot stays O(1) queries as trips grow.
+    const groupBy = (rows, key) => {
+      const map = new Map();
+      for (const r of rows) {
+        const list = map.get(r[key]) ?? [];
+        list.push(r);
+        map.set(r[key], list);
+      }
+      return map;
+    };
+
+    const destVotes = groupBy(
+      db.prepare(
+        `SELECT dv.destination_id, dv.member_id FROM destination_votes dv
+         JOIN destinations d ON d.id = dv.destination_id WHERE d.trip_id = ?`
+      ).all(t),
+      'destination_id'
+    );
     const destinations = db
       .prepare('SELECT * FROM destinations WHERE trip_id = ? ORDER BY created_at').all(t)
-      .map((d) => ({
-        ...d,
-        voters: db.prepare('SELECT member_id FROM destination_votes WHERE destination_id = ?')
-          .all(d.id).map((v) => v.member_id),
-      }));
+      .map((d) => ({ ...d, voters: (destVotes.get(d.id) ?? []).map((v) => v.member_id) }));
 
+    const dateVotes = groupBy(
+      db.prepare(
+        `SELECT v.date_option_id, v.member_id, v.response FROM date_votes v
+         JOIN date_options o ON o.id = v.date_option_id WHERE o.trip_id = ?`
+      ).all(t),
+      'date_option_id'
+    );
     const dateOptions = db
       .prepare('SELECT * FROM date_options WHERE trip_id = ? ORDER BY start_date').all(t)
       .map((o) => ({
         ...o,
-        votes: db.prepare('SELECT member_id, response FROM date_votes WHERE date_option_id = ?').all(o.id),
+        votes: (dateVotes.get(o.id) ?? []).map(({ member_id, response }) => ({ member_id, response })),
       }));
 
     const budgetItems = db.prepare('SELECT * FROM budget_items WHERE trip_id = ? ORDER BY created_at').all(t);
 
+    const expSplits = groupBy(
+      db.prepare(
+        `SELECT s.expense_id, s.member_id, s.weight FROM expense_splits s
+         JOIN expenses e ON e.id = s.expense_id WHERE e.trip_id = ?`
+      ).all(t),
+      'expense_id'
+    );
     const expenses = db
       .prepare('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at DESC').all(t)
       .map((e) => ({
         ...e,
-        splits: db.prepare('SELECT member_id, weight FROM expense_splits WHERE expense_id = ?').all(e.id),
+        splits: (expSplits.get(e.id) ?? []).map(({ member_id, weight }) => ({ member_id, weight })),
       }));
 
     const itinerary = db.prepare('SELECT * FROM itinerary_items WHERE trip_id = ? ORDER BY day, sort, time').all(t);
@@ -345,12 +384,24 @@ export function createApp({ dbFile } = {}) {
   }));
 
   app.use('/api', api);
+  // Unknown API routes get JSON, not the SPA fallback HTML.
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-  // Static SPA.
+  // Static SPA. Assets revalidate via ETag with a short freshness window;
+  // HTML is always revalidated so deploys show up immediately.
   const publicDir = join(__dirname, '..', 'public');
-  app.use(express.static(publicDir));
+  const htmlNoCache = (res) => res.set('Cache-Control', 'no-cache');
+  app.use(express.static(publicDir, {
+    setHeaders(res, path) {
+      if (path.endsWith('.html')) htmlNoCache(res);
+      else res.set('Cache-Control', 'public, max-age=300, must-revalidate');
+    },
+  }));
   // Client-side routing fallback for non-API GETs.
-  app.get(/^(?!\/api).*/, (req, res) => res.sendFile(join(publicDir, 'index.html')));
+  app.get(/^(?!\/api).*/, (req, res) => {
+    htmlNoCache(res);
+    res.sendFile(join(publicDir, 'index.html'));
+  });
 
   app.locals.db = db;
   return app;

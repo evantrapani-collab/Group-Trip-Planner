@@ -3,14 +3,137 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TripTogether — plan group trips together</title>
-  <meta name="description" content="Collect destination ideas, vote, poll dates, budget, split expenses, and build an itinerary — together." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <title>TripTogether — plan group trips without the group-chat chaos</title>
+  <meta name="description" content="Vote on destinations, poll dates, set a budget, split expenses fairly, build a shared itinerary and to-do list — free, no accounts, just a 6-letter code." />
+  <meta name="theme-color" content="#0f1117" />
+  <meta name="color-scheme" content="dark" />
+
+  <!-- Social cards -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="TripTogether" />
+  <meta property="og:title" content="TripTogether — plan group trips together" />
+  <meta property="og:description" content="Vote on destinations, poll dates, budget, split expenses, and build a shared itinerary. Free, no accounts — share a 6-letter code." />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="TripTogether — plan group trips together" />
+  <meta name="twitter:description" content="One link replaces the 400-message group chat: vote, pick dates, budget, split costs, plan days." />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "TripTogether",
+    "applicationCategory": "TravelApplication",
+    "operatingSystem": "Web",
+    "description": "Plan group trips together: vote on destinations, poll dates, budget, split expenses, build an itinerary, and share tasks.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="modulepreload" href="/app.js" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>" />
+
+  <script>
+    // Trip links shouldn't flash the marketing page while the app boots.
+    if (/^#\/trip\//.test(location.hash)) document.documentElement.classList.add('booting-trip');
+  </script>
 </head>
 <body>
-  <div id="app"></div>
+  <div class="orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <!-- Static home page: painted before any JS runs. app.js captures this
+       markup at boot and reuses it, so this is the single source of truth
+       for the landing page. -->
+  <div id="app">
+    <div class="topbar"><div class="container topbar-inner">
+      <div class="logo" data-act="home"><span class="mark">✈️</span> Trip<b>Together</b></div>
+      <div class="spacer"></div>
+      <span class="pill-note">Free · No accounts · No app to install</span>
+    </div></div>
+
+    <div class="container">
+      <section class="hero">
+        <div class="hero-badge">🧳 One link replaces the 400-message group chat</div>
+        <h1>Plan your group trip<br/><span class="grad">without the group chat chaos</span></h1>
+        <p class="lead">Collect destination ideas and vote, find dates that work for everyone, set a budget, split expenses fairly, and build a shared itinerary — all in one place, shared with a single 6-letter code.</p>
+      </section>
+
+      <div class="home-cards">
+        <div class="card">
+          <h2>Start a new trip</h2>
+          <p class="sub">Create a trip and get a code to share with your crew.</p>
+          <form data-form="create">
+            <label class="field"><span>Trip name</span><input name="name" placeholder="Summer in Lisbon" required maxlength="80" /></label>
+            <label class="field"><span>Your name</span><input name="organizerName" placeholder="Alex" required maxlength="40" /></label>
+            <label class="field"><span>Description (optional)</span><input name="description" placeholder="A week of sun, food & friends" maxlength="160" /></label>
+            <button class="btn primary block" type="submit">Create trip →</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Join a trip</h2>
+          <p class="sub">Got a 6-letter code from a friend? Hop in.</p>
+          <form data-form="join">
+            <label class="field"><span>Trip code</span><input name="code" placeholder="ABC123" required maxlength="6" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase;letter-spacing:3px;font-weight:700" /></label>
+            <label class="field"><span>Your name</span><input name="name" placeholder="Sam" required maxlength="40" /></label>
+            <button class="btn block" type="submit">Join trip</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Decorative product preview -->
+      <section class="preview-wrap" aria-hidden="true">
+        <div class="preview">
+          <div class="pv-bar"><i></i><i></i><i></i><span>triptogether · LIS2GO</span></div>
+          <div class="pv-cols">
+            <div class="pv-panel">
+              <div class="pv-h">🗳️ Where should we go?</div>
+              <div class="pv-row"><span class="pv-vote hot">▲ 5</span><span class="pv-grow">Lisbon, Portugal <em class="pv-tag">leading</em></span></div>
+              <div class="pv-row"><span class="pv-vote">▲ 3</span><span class="pv-grow">Mexico City</span></div>
+              <div class="pv-row"><span class="pv-vote">▲ 2</span><span class="pv-grow">Tokyo</span></div>
+            </div>
+            <div class="pv-panel">
+              <div class="pv-h">💸 Settle up</div>
+              <div class="pv-row"><span class="pv-av" style="background:#ec4899">S</span> Sam <span class="pv-arrow">→</span> <span class="pv-av" style="background:#6366f1">A</span> Alex <span class="pv-grow pv-amt">$104.50</span></div>
+              <div class="pv-row"><span class="pv-av" style="background:#f59e0b">J</span> Jo <span class="pv-arrow">→</span> <span class="pv-av" style="background:#6366f1">A</span> Alex <span class="pv-grow pv-amt">$62.00</span></div>
+              <div class="pv-h" style="margin-top:12px">📅 Aug 14 – Aug 21 <em class="pv-tag ok">6 yes</em></div>
+              <div class="pv-barline"><i style="width:86%"></i></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="feature-grid">
+        <div class="feature"><div class="ico">🗳️</div><h3>Vote on destinations</h3><p>Everyone pitches ideas. Upvotes surface the favorite — then lock it in.</p></div>
+        <div class="feature"><div class="ico">📅</div><h3>Find the right dates</h3><p>Propose date ranges and let people mark yes / maybe / no.</p></div>
+        <div class="feature"><div class="ico">💰</div><h3>Budget together</h3><p>Set a target and break it down by flights, stay, food and more.</p></div>
+        <div class="feature"><div class="ico">🧾</div><h3>Split expenses fairly</h3><p>Log who paid for what. We compute the simplest way to settle up.</p></div>
+        <div class="feature"><div class="ico">🗺️</div><h3>Build an itinerary</h3><p>A shared day-by-day plan — export it straight to your calendar.</p></div>
+        <div class="feature"><div class="ico">✅</div><h3>Share the to-dos</h3><p>Assign tasks and packing items so nothing slips through.</p></div>
+      </div>
+
+      <section class="steps">
+        <h2 class="steps-title">Three steps to takeoff</h2>
+        <div class="steps-grid">
+          <div class="step"><span class="num">1</span><h3>Create a trip</h3><p>Name it, and you're in. No sign-up, no email, no password.</p></div>
+          <div class="step"><span class="num">2</span><h3>Share the code</h3><p>Drop the 6-letter code (or link) in the group chat — everyone joins in seconds.</p></div>
+          <div class="step"><span class="num">3</span><h3>Decide together</h3><p>Vote, budget, split, and plan. The app keeps everyone on the same page, live.</p></div>
+        </div>
+      </section>
+
+      <p class="empty">Built for friends, families and coworkers who'd rather travel than coordinate. 💛</p>
+    </div>
+  </div>
+
+  <!-- Shown instead of the landing page while a #/trip/CODE link loads. -->
+  <div id="boot" aria-hidden="true"><div class="spin"></div></div>
+
+  <noscript>
+    <div class="container" style="padding:24px 20px">
+      <div class="card"><h2>JavaScript required</h2>
+      <p>TripTogether is an interactive planner and needs JavaScript to run. Please enable it and reload.</p></div>
+    </div>
+  </noscript>
+
   <div id="toast" class="toast" aria-live="polite"></div>
   <div id="modal-root"></div>
   <script src="/app.js" type="module"></script>

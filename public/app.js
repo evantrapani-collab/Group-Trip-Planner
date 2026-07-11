@@ -4,6 +4,10 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
+// The landing page ships as static markup inside index.html so it paints
+// before any JS runs; capture it once so renderHome can restore it.
+const HOME_HTML = app.innerHTML;
+
 /* ----------------------------- API client ----------------------------- */
 const api = {
   async req(method, path, body) {
@@ -111,8 +115,38 @@ async function refresh() {
 
 window.addEventListener('hashchange', navigate);
 
+/* ----------------------------- live sync ------------------------------ */
+// Poll the trip snapshot so everyone sees each other's changes without
+// reloading. Pauses in hidden tabs and never re-renders mid-typing.
+const POLL_MS = 12000;
+let pollTimer = null;
+
+function syncPolling() {
+  const want = state.route === 'trip' && !!state.member && !document.hidden;
+  if (want && !pollTimer) pollTimer = setInterval(pollTick, POLL_MS);
+  if (!want && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollTick() {
+  if (state.route !== 'trip' || !state.member || document.hidden) return;
+  try {
+    const data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
+    if (JSON.stringify(data) === JSON.stringify(state.data)) return; // nothing new
+    state.data = data;
+    state.trip = data.trip;
+    // Don't yank the DOM out from under someone mid-form.
+    const ae = document.activeElement;
+    if (ae && app.contains(ae) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return;
+    render();
+  } catch { /* transient network hiccup — next tick will retry */ }
+}
+
+document.addEventListener('visibilitychange', () => { syncPolling(); if (!document.hidden) pollTick(); });
+
 /* ----------------------------- render --------------------------------- */
 function render() {
+  document.documentElement.classList.remove('booting-trip');
+  syncPolling();
   if (state.route === 'home') return renderHome();
   if (state.loading && !state.data) return renderShell(`<div class="spin"></div>`);
   if (!state.trip) return renderShell(`<div class="card"><h2>Trip not found</h2><p class="muted">We couldn't find a trip with that code. Double-check the link, or start a new one.</p><a class="btn primary mt" href="#/">Go home</a></div>`);
@@ -135,47 +169,8 @@ function renderShell(content) {
 
 /* ------- home ------- */
 function renderHome() {
-  app.innerHTML = topbar() + `
-  <div class="container">
-    <section class="hero">
-      <h1>Plan your group trip<br/><span class="grad">without the group chat chaos</span></h1>
-      <p class="lead">Collect destination ideas and vote, find dates that work for everyone, set a budget, split expenses fairly, and build a shared itinerary — all in one place.</p>
-    </section>
-
-    <div class="home-cards">
-      <div class="card">
-        <h2>Start a new trip</h2>
-        <p class="sub">Create a trip and get a code to share with your crew.</p>
-        <form data-form="create">
-          <label class="field"><span>Trip name</span><input name="name" placeholder="Summer in Lisbon" required maxlength="80" /></label>
-          <label class="field"><span>Your name</span><input name="organizerName" placeholder="Alex" required maxlength="40" /></label>
-          <label class="field"><span>Description (optional)</span><input name="description" placeholder="A week of sun, food & friends" maxlength="160" /></label>
-          <button class="btn primary block" type="submit">Create trip →</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>Join a trip</h2>
-        <p class="sub">Got a 6-letter code from a friend? Hop in.</p>
-        <form data-form="join">
-          <label class="field"><span>Trip code</span><input name="code" placeholder="ABC123" required maxlength="6" style="text-transform:uppercase;letter-spacing:3px;font-weight:700" /></label>
-          <label class="field"><span>Your name</span><input name="name" placeholder="Sam" required maxlength="40" /></label>
-          <button class="btn block" type="submit">Join trip</button>
-        </form>
-      </div>
-    </div>
-
-    <div class="feature-grid">
-      ${[
-        ['🗳️', 'Vote on destinations', 'Everyone pitches ideas. Upvotes surface the favorite — then lock it in.'],
-        ['📅', 'Find the right dates', 'Propose date ranges and let people mark yes / maybe / no.'],
-        ['💰', 'Budget together', 'Set a target and break it down by flights, stay, food and more.'],
-        ['🧾', 'Split expenses fairly', 'Log who paid for what. We compute the simplest way to settle up.'],
-        ['🗺️', 'Build an itinerary', 'A shared day-by-day plan so nobody misses the good stuff.'],
-        ['✅', 'Share the to-dos', 'Assign tasks and packing items so nothing slips through.'],
-      ].map(([i, h, p]) => `<div class="feature"><div class="ico">${i}</div><h3>${h}</h3><p>${p}</p></div>`).join('')}
-    </div>
-    <p class="empty">Built for friends, families and coworkers who'd rather travel than coordinate. 💛</p>
-  </div>`;
+  // The landing page lives in index.html (static, instant first paint).
+  app.innerHTML = HOME_HTML;
 }
 
 /* ------- join existing trip ------- */
@@ -263,6 +258,18 @@ function renderTab() {
 }
 
 /* ---- Overview ---- */
+function tripCountdown(t) {
+  if (!t.start_date) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(t.start_date + 'T00:00');
+  const end = new Date((t.end_date || t.start_date) + 'T00:00');
+  const days = Math.round((start - today) / 86400000);
+  if (days > 0) return { big: `${days} day${days === 1 ? '' : 's'}`, sub: 'until departure 🛫' };
+  if (today <= end) return { big: 'In progress', sub: 'enjoy the trip! 🌴' };
+  return { big: 'Wrapped up', sub: 'hope it was great 📸' };
+}
+
 function tabOverview() {
   const d = state.data;
   const chosen = d.destinations.find((x) => x.id === d.trip.chosen_destination_id);
@@ -281,8 +288,11 @@ function tabOverview() {
     ['💸 Your balance', `<span class="${myBal >= 0 ? 'bal-pos' : 'bal-neg'}">${myBal >= 0 ? '+' : ''}${money(myBal)}</span>`, myBal >= 0 ? "you're owed" : 'you owe'],
   ];
 
+  const cd = tripCountdown(d.trip);
+
   return `
   ${chosen ? `<div class="winner-banner">🎉 <b>${esc(chosen.name)}</b> is the chosen destination! Time to make it happen.</div>` : ''}
+  ${cd ? `<div class="countdown"><div class="cd-big">${cd.big}</div><div class="cd-sub">${cd.sub}${chosen ? ` · ${esc(chosen.name)}` : ''}</div></div>` : ''}
   <div class="stat-grid">
     ${cards.map(([k, v, s]) => `<div class="stat"><div class="k">${k}</div><div class="bigstat" style="font-size:22px">${v}</div><div class="muted" style="font-size:13px">${s}</div></div>`).join('')}
   </div>
@@ -399,6 +409,18 @@ function tabBudget() {
   });
   const pct = target ? Math.min(100, (total / target) * 100) : 0;
   const spentPct = target ? Math.min(100, (spent / target) * 100) : 0;
+  const CAT_COLORS = { Flights: '#6366f1', Accommodation: '#8b5cf6', Food: '#f59e0b', Transport: '#14b8a6', Activities: '#ec4899', Other: '#64748b' };
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const catBars = cats.length ? `
+    <div class="panel">
+      <div class="panel-head"><h2><span class="ico">📊</span> Where the money goes</h2></div>
+      <div class="catbar" role="img" aria-label="Budget by category">
+        ${cats.map(([c, amt]) => `<i style="width:${(amt / total) * 100}%;background:${CAT_COLORS[c] || CAT_COLORS.Other}" title="${esc(c)}: ${money(amt)}"></i>`).join('')}
+      </div>
+      <div class="cat-legend">
+        ${cats.map(([c, amt]) => `<span class="cat-key"><i style="background:${CAT_COLORS[c] || CAT_COLORS.Other}"></i>${esc(c)} <b>${money(amt)}</b> <span class="faint">${Math.round((amt / total) * 100)}%</span></span>`).join('')}
+      </div>
+    </div>` : '';
   return `
   <div class="stat-grid">
     <div class="stat"><div class="k">Target budget</div><div class="bigstat">${target ? money(target) : '—'}</div>
@@ -415,6 +437,8 @@ function tabBudget() {
     </div>
     <div class="stat"><div class="k">Per person (planned)</div><div class="bigstat">${money(total / n)}</div><div class="muted" style="font-size:13px">${n} traveler${n === 1 ? '' : 's'}</div></div>
   </div>
+
+  ${catBars}
 
   <div class="panel">
     <div class="panel-head"><h2><span class="ico">💰</span> Budget breakdown</h2></div>
@@ -502,7 +526,12 @@ function tabItinerary() {
   const keys = Object.keys(groups);
   return `
   <div class="panel">
-    <div class="panel-head"><h2><span class="ico">🗺️</span> Build the itinerary</h2></div>
+    <div class="panel-head"><h2><span class="ico">🗺️</span> Build the itinerary</h2>
+      <div class="flex">
+        <button class="btn sm ghost" data-act="export-ics" title="Download .ics for Google/Apple Calendar">📆 Export to calendar</button>
+        <button class="btn sm ghost" data-act="print" title="Print or save as PDF">🖨️ Print</button>
+      </div>
+    </div>
     <form data-form="itinerary" class="row" style="align-items:flex-end">
       <label class="field" style="flex:none"><span>Day</span><input name="day" placeholder="Day 1" maxlength="30" style="width:90px"/></label>
       <label class="field" style="flex:none"><span>Time</span><input name="time" type="time" style="width:120px"/></label>
@@ -574,6 +603,90 @@ function tabPeople() {
     </div>
   </div>`;
 }
+
+/* ----------------------------- extras --------------------------------- */
+// Build an iCalendar file from the itinerary. Items whose "Day" contains a
+// number (e.g. "Day 2") are anchored to the trip's start date; timed items
+// become 1-hour events, the rest are all-day.
+function buildIcs() {
+  const t = state.trip;
+  if (!t.start_date) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const escIcs = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TripTogether//EN', `X-WR-CALNAME:${escIcs(t.name)}`];
+  let count = 0;
+  for (const it of state.data.itinerary) {
+    const dayNum = /(\d+)/.exec(it.day || '');
+    if (!dayNum) continue;
+    const date = new Date(t.start_date + 'T00:00');
+    date.setDate(date.getDate() + Number(dayNum[1]) - 1);
+    const ymd = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+    lines.push('BEGIN:VEVENT', `UID:${it.id}@triptogether`, `SUMMARY:${escIcs(it.title)}`);
+    if (it.location) lines.push(`LOCATION:${escIcs(it.location)}`);
+    if (it.notes) lines.push(`DESCRIPTION:${escIcs(it.notes)}`);
+    const hm = /^(\d{2}):(\d{2})/.exec(it.time || '');
+    if (hm) {
+      // Floating local time — correct wherever the trip happens.
+      lines.push(`DTSTART:${ymd}T${hm[1]}${hm[2]}00`);
+      const end = new Date(date); end.setHours(Number(hm[1]) + 1, Number(hm[2]));
+      lines.push(`DTEND:${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}T${pad(end.getHours())}${pad(end.getMinutes())}00`);
+    } else {
+      const next = new Date(date); next.setDate(next.getDate() + 1);
+      lines.push(`DTSTART;VALUE=DATE:${ymd}`, `DTEND;VALUE=DATE:${next.getFullYear()}${pad(next.getMonth() + 1)}${pad(next.getDate())}`);
+    }
+    lines.push('END:VEVENT');
+    count++;
+  }
+  lines.push('END:VCALENDAR');
+  return count ? { text: lines.join('\r\n'), count } : { text: null, count: 0 };
+}
+
+function downloadFile(name, text, type = 'text/calendar') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// A brief celebratory burst when the group locks in a destination.
+function confetti() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const c = document.createElement('canvas');
+  Object.assign(c.style, { position: 'fixed', inset: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 99 });
+  c.width = innerWidth; c.height = innerHeight;
+  document.body.appendChild(c);
+  const ctx = c.getContext('2d');
+  const colors = ['#6366f1', '#8b5cf6', '#14b8a6', '#f59e0b', '#ec4899', '#10b981'];
+  const parts = Array.from({ length: 120 }, () => ({
+    x: c.width / 2, y: c.height * 0.4,
+    vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 12 - 3,
+    s: Math.random() * 7 + 3, r: Math.random() * Math.PI,
+    col: colors[Math.random() * colors.length | 0],
+  }));
+  const t0 = performance.now();
+  (function frame(now) {
+    const dt = (now - t0) / 1600;
+    ctx.clearRect(0, 0, c.width, c.height);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.35; p.r += 0.1;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+      ctx.globalAlpha = Math.max(0, 1 - dt);
+      ctx.fillStyle = p.col; ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6);
+      ctx.restore();
+    }
+    if (dt < 1) requestAnimationFrame(frame); else c.remove();
+  })(t0);
+}
+
+// Number keys 1–8 jump between tabs when you're not typing.
+document.addEventListener('keydown', (e) => {
+  if (state.route !== 'trip' || !state.member) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const ae = document.activeElement;
+  if (ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= TABS.length) { state.tab = TABS[n - 1][0]; render(); }
+});
 
 /* ----------------------------- events --------------------------------- */
 const formData = (form) => {
@@ -669,16 +782,30 @@ document.addEventListener('click', async (e) => {
       case 'home': location.hash = '#/'; return;
       case 'copy-share': {
         const url = `${location.origin}/#/trip/${state.trip.share_code}`;
+        if (navigator.share) {
+          await navigator.share({ title: `Join "${state.trip.name}" on TripTogether`, url }).catch(() => {});
+          return;
+        }
         await navigator.clipboard.writeText(url).catch(() => {});
         toast('Invite link copied to clipboard!');
         return;
       }
+      case 'export-ics': {
+        const ics = buildIcs();
+        if (!ics) return toast('Set the trip dates first (Dates tab → “Set”), then export.', true);
+        if (!ics.count) return toast('Name itinerary days like “Day 1”, “Day 2” so they can be placed on the calendar.', true);
+        downloadFile(`${state.trip.name.replace(/[^\w-]+/g, '-').toLowerCase()}.ics`, ics.text);
+        toast(`Exported ${ics.count} event${ics.count === 1 ? '' : 's'} — import the file into your calendar.`);
+        return;
+      }
+      case 'print': window.print(); return;
       case 'vote-dest':
         await api.post(`/destinations/${id}/vote`, { memberId: state.member.id });
         await refresh(); return;
       case 'choose-dest':
         await api.patch(`/trips/${tripId}`, { chosen_destination_id: id || null });
         toast(id ? 'Destination locked in! 🎉' : 'Choice cleared.');
+        if (id) confetti();
         await refresh(); return;
       case 'del-dest':
         if (!confirm('Delete this destination?')) return;

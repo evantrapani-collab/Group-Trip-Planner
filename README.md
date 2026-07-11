@@ -1,5 +1,7 @@
 # ✈️ TripTogether
 
+[![CI](https://github.com/evantrapani-collab/Group-Trip-Planner/actions/workflows/ci.yml/badge.svg)](https://github.com/evantrapani-collab/Group-Trip-Planner/actions/workflows/ci.yml)
+
 **Plan group trips together — without the group-chat chaos.**
 
 TripTogether is a shareable web app for coordinating a trip with friends, family,
@@ -21,6 +23,11 @@ hops in with just their name.
 | 🗺️ **Itinerary** | A shared day-by-day plan with times, places, and notes. |
 | ✅ **Tasks** | A shared to-do / packing checklist with assignments. |
 | 👥 **People** | See who's in, invite by link, add people manually. |
+| 🔄 **Live sync** | The trip refreshes itself every few seconds, so the whole group sees changes without reloading. |
+| ⏳ **Countdown** | Once dates are set, the overview counts down to departure. |
+| 📆 **Calendar export** | Download the itinerary as an `.ics` file for Google/Apple Calendar, or print it to PDF. |
+| 📊 **Budget chart** | A per-category breakdown bar shows where the money goes. |
+| ⌨️ **Shortcuts** | Keys 1–8 jump between tabs; the invite button uses the native share sheet on mobile. |
 
 ## How we're different
 
@@ -133,7 +140,7 @@ server/
   settle.js   Pure expense-splitting / settle-up math
   index.js    Server entry point
 public/
-  index.html  SPA shell
+  index.html  Static landing page + SPA shell (instant first paint, SEO meta)
   styles.css  Styling
   app.js      SPA logic (routing, rendering, API client)
 test/
