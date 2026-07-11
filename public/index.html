@@ -36,7 +36,12 @@
 
   <script>
     // Trip links shouldn't flash the marketing page while the app boots.
-    if (/^#\/trip\//.test(location.hash)) document.documentElement.classList.add('booting-trip');
+    // render() removes the class; the timeout is a failsafe so a script
+    // failure degrades to the landing page instead of an endless spinner.
+    if (/^#\/trip\//.test(location.hash)) {
+      document.documentElement.classList.add('booting-trip');
+      setTimeout(function () { document.documentElement.classList.remove('booting-trip'); }, 8000);
+    }
   </script>
 </head>
 <body>

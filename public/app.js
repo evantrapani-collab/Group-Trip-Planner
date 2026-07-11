@@ -57,10 +57,26 @@ const state = {
   code: null,
   trip: null,
   data: null,     // full state snapshot
+  snapshotJson: null, // serialized copy of `data`, for cheap change detection
   member: null,   // my identity in current trip
   tab: 'overview',
   loading: false,
 };
+
+// Single place that commits a fresh server snapshot; keeps a serialized copy
+// so the poll loop can detect changes with one stringify per tick.
+function setSnapshot(data) {
+  state.data = data;
+  state.trip = data.trip;
+  state.snapshotJson = JSON.stringify(data);
+}
+
+const isTyping = () => {
+  const ae = document.activeElement;
+  return !!ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName);
+};
+
+const membersById = () => new Map(state.data.members.map((m) => [m.id, m]));
 
 const memberKey = (tripId) => `tt:member:${tripId}`;
 const saveMember = (tripId, m) => localStorage.setItem(memberKey(tripId), JSON.stringify(m));
@@ -91,14 +107,14 @@ async function loadTrip() {
   render();
   try {
     const data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
-    state.data = data;
-    state.trip = data.trip;
+    setSnapshot(data);
     const stored = loadMember(state.trip.id);
     // Make sure the stored identity still exists server-side.
     state.member = stored && data.members.find((m) => m.id === stored.id) ? stored : null;
   } catch (e) {
     state.data = null;
     state.trip = null;
+    state.snapshotJson = null;
     toast(e.message, true);
   } finally {
     state.loading = false;
@@ -107,8 +123,7 @@ async function loadTrip() {
 
 async function refresh() {
   try {
-    state.data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
-    state.trip = state.data.trip;
+    setSnapshot(await api.get(`/trips/${encodeURIComponent(state.code)}/state`));
   } catch (e) { toast(e.message, true); }
   render();
 }
@@ -131,12 +146,11 @@ async function pollTick() {
   if (state.route !== 'trip' || !state.member || document.hidden) return;
   try {
     const data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
-    if (JSON.stringify(data) === JSON.stringify(state.data)) return; // nothing new
-    state.data = data;
-    state.trip = data.trip;
-    // Don't yank the DOM out from under someone mid-form.
-    const ae = document.activeElement;
-    if (ae && app.contains(ae) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return;
+    if (JSON.stringify(data) === state.snapshotJson) return; // nothing new
+    // Don't yank the DOM out from under someone mid-form. State stays
+    // untouched too, so the next tick retries and the update still lands.
+    if (isTyping()) return;
+    setSnapshot(data);
     render();
   } catch { /* transient network hiccup — next tick will retry */ }
 }
@@ -325,7 +339,7 @@ const IDEA_CHIPS = ['Lisbon, Portugal', 'Tokyo, Japan', 'Mexico City, Mexico', '
 
 function tabDestinations() {
   const d = state.data;
-  const byId = new Map(d.members.map((m) => [m.id, m]));
+  const byId = membersById();
   const sorted = [...d.destinations].sort((a, b) => b.voters.length - a.voters.length);
   const maxVotes = sorted[0]?.voters.length || 0;
   return `
@@ -373,7 +387,7 @@ function tabDestinations() {
 /* ---- Dates ---- */
 function tabDates() {
   const d = state.data;
-  const byId = new Map(d.members.map((m) => [m.id, m]));
+  const byId = membersById();
   const opts = d.dateOptions;
   const votersFor = (o, resp) => o.votes.filter((v) => v.response === resp).map((v) => byId.get(v.member_id)).filter(Boolean);
   const cell = (o, resp, cls) => {
@@ -433,7 +447,7 @@ function tabBudget() {
   const pct = target ? Math.min(100, (total / target) * 100) : 0;
   const spentPct = target ? Math.min(100, (spent / target) * 100) : 0;
   const CAT_COLORS = { Flights: '#6366f1', Accommodation: '#8b5cf6', Food: '#f59e0b', Transport: '#14b8a6', Activities: '#ec4899', Other: '#64748b' };
-  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const cats = total > 0 ? Object.entries(byCat).sort((a, b) => b[1] - a[1]) : [];
   const catBars = cats.length ? `
     <div class="panel">
       <div class="panel-head"><h2><span class="ico">📊</span> Where the money goes</h2></div>
@@ -643,8 +657,10 @@ function buildIcs() {
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TripTogether//EN', `X-WR-CALNAME:${escIcs(t.name)}`];
   let count = 0;
   for (const it of state.data.itinerary) {
-    const dayNum = /(\d+)/.exec(it.day || '');
-    if (!dayNum) continue;
+    // Only "Day N"-style labels map unambiguously onto the trip's dates;
+    // free-text like "August 21" is skipped rather than mis-placed.
+    const dayNum = /day\s*(\d+)/i.exec(it.day || '');
+    if (!dayNum || Number(dayNum[1]) < 1 || Number(dayNum[1]) > 365) continue;
     const date = new Date(t.start_date + 'T00:00');
     date.setDate(date.getDate() + Number(dayNum[1]) - 1);
     const ymd = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
@@ -709,8 +725,7 @@ function confetti() {
 document.addEventListener('keydown', (e) => {
   if (state.route !== 'trip' || !state.member) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  const ae = document.activeElement;
-  if (ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return;
+  if (isTyping()) return;
   const n = Number(e.key);
   if (n >= 1 && n <= TABS.length) { state.tab = TABS[n - 1][0]; render(); }
 });
@@ -809,12 +824,14 @@ document.addEventListener('click', async (e) => {
       case 'home': location.hash = '#/'; return;
       case 'copy-share': {
         const url = `${location.origin}/#/trip/${state.trip.share_code}`;
-        if (navigator.share) {
+        // Touch devices get the native share sheet; elsewhere the pill does
+        // what its tooltip promises and copies the link.
+        if (navigator.share && matchMedia('(pointer: coarse)').matches) {
           await navigator.share({ title: `Join "${state.trip.name}" on TripTogether`, url }).catch(() => {});
           return;
         }
-        await navigator.clipboard.writeText(url).catch(() => {});
-        toast('Invite link copied to clipboard!');
+        const copied = await navigator.clipboard.writeText(url).then(() => true, () => false);
+        toast(copied ? 'Invite link copied to clipboard!' : `Share this link: ${url}`, !copied);
         return;
       }
       case 'export-ics': {

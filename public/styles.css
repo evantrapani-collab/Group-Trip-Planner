@@ -269,7 +269,7 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 /* ---------- small avatars & chips ---------- */
 .avatar.sm { width: 20px; height: 20px; font-size: 9px; border-width: 1px; margin-left: -6px; }
 .avatars.sm { display: inline-flex; align-items: center; }
-.avatars.sm .avatar:first-child, .avatars .avatar:first-child { margin-left: 0; }
+.avatars .avatar:first-child { margin-left: 0; }
 .avatars.center { justify-content: center; margin-top: 3px; }
 .mt-sm { margin-top: 8px; }
 .warn-txt { color: var(--warn); font-weight: 700; }
