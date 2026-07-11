@@ -114,3 +114,38 @@ test('tasks toggle done', async () => {
 test('unknown trip returns 404', async () => {
   assert.equal((await call('GET', '/trips/ZZZZZZ/state')).status, 404);
 });
+
+test('unknown API route returns JSON 404, not SPA HTML', async () => {
+  const r = await call('GET', '/definitely-not-a-route');
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, 'Not found');
+});
+
+test('state groups votes and splits under the right parents', async () => {
+  const c = await call('POST', '/trips', { name: 'Grouping', organizerName: 'A' });
+  const tid = c.body.trip.id;
+  const a = c.body.member.id;
+  const b = (await call('POST', `/trips/${tid}/members`, { name: 'B' })).body.member.id;
+
+  const d1 = (await call('POST', `/trips/${tid}/destinations`, { name: 'X' })).body.destination.id;
+  const d2 = (await call('POST', `/trips/${tid}/destinations`, { name: 'Y' })).body.destination.id;
+  await call('POST', `/destinations/${d1}/vote`, { memberId: a });
+  await call('POST', `/destinations/${d1}/vote`, { memberId: b });
+  await call('POST', `/destinations/${d2}/vote`, { memberId: b });
+
+  const o1 = (await call('POST', `/trips/${tid}/dates`, { startDate: '2026-08-01', endDate: '2026-08-05' })).body.option.id;
+  const o2 = (await call('POST', `/trips/${tid}/dates`, { startDate: '2026-09-01', endDate: '2026-09-05' })).body.option.id;
+  await call('POST', `/dates/${o1}/vote`, { memberId: a, response: 'yes' });
+  await call('POST', `/dates/${o2}/vote`, { memberId: b, response: 'maybe' });
+
+  await call('POST', `/trips/${tid}/expenses`, { description: 'e1', amount: 30, paidBy: a, participants: [a, b] });
+  await call('POST', `/trips/${tid}/expenses`, { description: 'e2', amount: 10, paidBy: b, participants: [b] });
+
+  const s = (await call('GET', `/trips/${tid}/state`)).body;
+  assert.deepEqual(new Set(s.destinations.find((d) => d.id === d1).voters), new Set([a, b]));
+  assert.deepEqual(s.destinations.find((d) => d.id === d2).voters, [b]);
+  assert.deepEqual(s.dateOptions.find((o) => o.id === o1).votes, [{ member_id: a, response: 'yes' }]);
+  assert.deepEqual(s.dateOptions.find((o) => o.id === o2).votes, [{ member_id: b, response: 'maybe' }]);
+  assert.equal(s.expenses.find((e) => e.description === 'e1').splits.length, 2);
+  assert.deepEqual(s.expenses.find((e) => e.description === 'e2').splits, [{ member_id: b, weight: 1 }]);
+});

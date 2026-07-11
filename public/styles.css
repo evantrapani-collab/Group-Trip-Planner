@@ -266,6 +266,27 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .cat-key i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .cat-key b { color: var(--text); }
 
+/* ---------- small avatars & chips ---------- */
+.avatar.sm { width: 20px; height: 20px; font-size: 9px; border-width: 1px; margin-left: -6px; }
+.avatars.sm { display: inline-flex; align-items: center; }
+.avatars.sm .avatar:first-child, .avatars .avatar:first-child { margin-left: 0; }
+.avatars.center { justify-content: center; margin-top: 3px; }
+.mt-sm { margin-top: 8px; }
+.warn-txt { color: var(--warn); font-weight: 700; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.chipbtn { background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); border-radius: 999px; padding: 6px 13px; font-size: 13px; transition: .15s; }
+.chipbtn:hover { color: var(--text); border-color: var(--brand); transform: translateY(-1px); }
+
+/* ---------- entrance & hover polish ---------- */
+.hero > * { animation: rise .5s ease both; }
+.hero > *:nth-child(2) { animation-delay: .06s; }
+.hero > *:nth-child(3) { animation-delay: .12s; }
+.home-cards { animation: rise .5s ease .18s both; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.feature, .step { transition: transform .18s ease, border-color .18s ease; }
+.feature:hover, .step:hover { transform: translateY(-3px); border-color: var(--faint); }
+button.checkbox { padding: 0; }
+
 /* ---------- accessibility & motion ---------- */
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
 @media (prefers-reduced-motion: reduce) {

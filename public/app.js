@@ -144,9 +144,12 @@ async function pollTick() {
 document.addEventListener('visibilitychange', () => { syncPolling(); if (!document.hidden) pollTick(); });
 
 /* ----------------------------- render --------------------------------- */
+const DEFAULT_TITLE = document.title;
+
 function render() {
   document.documentElement.classList.remove('booting-trip');
   syncPolling();
+  document.title = state.route === 'trip' && state.trip ? `${state.trip.name} — TripTogether` : DEFAULT_TITLE;
   if (state.route === 'home') return renderHome();
   if (state.loading && !state.data) return renderShell(`<div class="spin"></div>`);
   if (!state.trip) return renderShell(`<div class="card"><h2>Trip not found</h2><p class="muted">We couldn't find a trip with that code. Double-check the link, or start a new one.</p><a class="btn primary mt" href="#/">Go home</a></div>`);
@@ -224,22 +227,24 @@ function renderTrip() {
         <div class="meta">${t.description ? esc(t.description) + ' · ' : ''}${
           t.start_date ? esc(fmtRange(t.start_date, t.end_date)) + ' · ' : ''
         }${d.members.length} traveler${d.members.length === 1 ? '' : 's'}</div>
+        <div class="avatars mt-sm">${d.members.slice(0, 10).map((m) => avatar(m)).join('')}${
+          d.members.length > 10 ? `<span class="muted" style="margin-left:6px;font-size:13px">+${d.members.length - 10}</span>` : ''}</div>
       </div>
       <div class="share-pill" data-act="copy-share" title="Click to copy invite link">
         <span class="faint">CODE</span><code>${esc(t.share_code)}</code><span class="faint">📋</span>
       </div>
     </div>
 
-    <div class="tabs">
-      ${TABS.map(([k, label]) => {
+    <div class="tabs" role="tablist" aria-label="Trip sections">
+      ${TABS.map(([k, label], i) => {
         const c = tabCount(k);
-        return `<button class="tab ${state.tab === k ? 'active' : ''}" data-tab="${k}">${label}${
+        return `<button class="tab ${state.tab === k ? 'active' : ''}" role="tab" aria-selected="${state.tab === k}" data-tab="${k}" title="Shortcut: ${i + 1}">${label}${
           c ? `<span class="badge">${c}</span>` : ''
         }</button>`;
       }).join('')}
     </div>
 
-    <div id="tabview">${renderTab()}</div>
+    <div id="tabview" role="tabpanel">${renderTab()}</div>
   </div>`;
 }
 
@@ -309,15 +314,18 @@ function tabOverview() {
       <div class="panel-head"><h2><span class="ico">✅</span> Open tasks <span class="badge">${openTasks}</span></h2><button class="btn sm" data-tab="tasks">Open tasks</button></div>
       ${d.tasks.filter((t) => !t.done).slice(0, 6).map((t) => {
         const a = d.members.find((m) => m.id === t.assigned_to);
-        return `<div class="task"><div class="checkbox" data-act="toggle-task" data-id="${t.id}"></div><div class="grow title">${esc(t.title)}</div>${a ? avatar(a) : ''}</div>`;
+        return `<div class="task"><button class="checkbox" data-act="toggle-task" data-id="${t.id}" role="checkbox" aria-checked="false" aria-label="${esc(t.title)}"></button><div class="grow title">${esc(t.title)}</div>${a ? avatar(a) : ''}</div>`;
       }).join('') || `<div class="empty">Nothing to do — nice. 🎉</div>`}
     </div>
   </div>`;
 }
 
 /* ---- Destinations ---- */
+const IDEA_CHIPS = ['Lisbon, Portugal', 'Tokyo, Japan', 'Mexico City, Mexico', 'Barcelona, Spain', 'Bali, Indonesia', 'New Orleans, USA'];
+
 function tabDestinations() {
   const d = state.data;
+  const byId = new Map(d.members.map((m) => [m.id, m]));
   const sorted = [...d.destinations].sort((a, b) => b.voters.length - a.voters.length);
   const maxVotes = sorted[0]?.voters.length || 0;
   return `
@@ -344,21 +352,36 @@ function tabDestinations() {
         <div class="grow">
           <div class="title">${esc(dest.name)} ${isChosen ? '<span class="tag" style="color:var(--accent);border-color:var(--accent)">CHOSEN</span>' : isLeader && maxVotes ? '<span class="tag">leading</span>' : ''}</div>
           ${dest.description ? `<div class="desc">${esc(dest.description)}</div>` : ''}
-          <div class="faint" style="font-size:12px;margin-top:4px">${dest.est_cost ? '~' + money(dest.est_cost) + '/person' : ''}</div>
+          <div class="flex" style="margin-top:5px;gap:8px">
+            ${dest.voters.length ? `<span class="avatars sm">${dest.voters.map((vid) => byId.get(vid)).filter(Boolean).map((m) => avatar(m, 'sm')).join('')}</span>` : ''}
+            <span class="faint" style="font-size:12px">${dest.est_cost ? '~' + money(dest.est_cost) + '/person' : ''}${
+              dest.proposed_by && byId.get(dest.proposed_by) ? `${dest.est_cost ? ' · ' : ''}idea by ${esc(byId.get(dest.proposed_by).name)}` : ''}</span>
+          </div>
         </div>
         <div class="flex">
           <button class="btn sm ${isChosen ? '' : 'ghost'}" data-act="choose-dest" data-id="${isChosen ? '' : dest.id}">${isChosen ? '✓ Chosen' : 'Choose'}</button>
-          <button class="iconbtn" data-act="del-dest" data-id="${dest.id}" title="Delete">✕</button>
+          <button class="iconbtn" data-act="del-dest" data-id="${dest.id}" title="Delete" aria-label="Delete ${esc(dest.name)}">✕</button>
         </div>
       </div>`;
-    }).join('') : `<div class="empty">No ideas yet — be the first to suggest a destination! ✨</div>`}
+    }).join('') : `
+      <div class="empty">No ideas yet — be the first to suggest a destination! ✨<br/>
+        <span class="chips">${IDEA_CHIPS.map((c) => `<button class="chipbtn" data-act="prefill-dest" data-name="${esc(c)}">${esc(c)}</button>`).join('')}</span>
+      </div>`}
   </div>`;
 }
 
 /* ---- Dates ---- */
 function tabDates() {
   const d = state.data;
+  const byId = new Map(d.members.map((m) => [m.id, m]));
   const opts = d.dateOptions;
+  const votersFor = (o, resp) => o.votes.filter((v) => v.response === resp).map((v) => byId.get(v.member_id)).filter(Boolean);
+  const cell = (o, resp, cls) => {
+    const vs = votersFor(o, resp);
+    const names = vs.map((m) => m.name).join(', ');
+    return `<td title="${esc(names)}"><span class="${cls}">${vs.length}</span>${
+      vs.length ? `<div class="avatars sm center">${vs.slice(0, 5).map((m) => avatar(m, 'sm')).join('')}${vs.length > 5 ? `<span class="faint" style="font-size:11px">+${vs.length - 5}</span>` : ''}</div>` : ''}</td>`;
+  };
   return `
   <div class="panel">
     <div class="panel-head"><h2><span class="ico">📅</span> When works for everyone?</h2></div>
@@ -381,13 +404,13 @@ function tabDates() {
           const isSet = d.trip.start_date === o.start_date && d.trip.end_date === o.end_date;
           return `<tr>
             <td><b>${esc(fmtRange(o.start_date, o.end_date))}</b> ${isWinner ? '<span class="tag">top</span>' : ''} ${isSet ? '<span class="tag" style="color:var(--accent)">set</span>' : ''}</td>
-            <td><span class="bal-pos">${counts.yes}</span></td>
-            <td><span style="color:var(--warn)">${counts.maybe}</span></td>
-            <td><span class="bal-neg">${counts.no}</span></td>
+            ${cell(o, 'yes', 'bal-pos')}
+            ${cell(o, 'maybe', 'warn-txt')}
+            ${cell(o, 'no', 'bal-neg')}
             <td><div class="resp">
-              ${['yes', 'maybe', 'no'].map((r) => `<button class="${mine === r ? 'on ' + r : ''}" data-act="vote-date" data-id="${o.id}" data-resp="${r}" title="${r}">${{ yes: '👍', maybe: '🤔', no: '👎' }[r]}</button>`).join('')}
+              ${['yes', 'maybe', 'no'].map((r) => `<button class="${mine === r ? 'on ' + r : ''}" data-act="vote-date" data-id="${o.id}" data-resp="${r}" title="${r}" aria-label="Vote ${r}" aria-pressed="${mine === r}">${{ yes: '👍', maybe: '🤔', no: '👎' }[r]}</button>`).join('')}
             </div></td>
-            <td class="nowrap"><button class="btn sm ghost" data-act="set-dates" data-id="${o.id}">Set</button> <button class="iconbtn" data-act="del-date" data-id="${o.id}">✕</button></td>
+            <td class="nowrap"><button class="btn sm ghost" data-act="set-dates" data-id="${o.id}">Set</button> <button class="iconbtn" data-act="del-date" data-id="${o.id}" title="Delete" aria-label="Delete date option">✕</button></td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -456,7 +479,7 @@ function tabBudget() {
         <div class="grow"><div class="title">${esc(b.label)} <span class="tag">${esc(b.category)}</span></div>
         <div class="desc">${b.per_person ? `${money(b.amount)} × ${n} people` : 'total'}</div></div>
         <div class="right"><div class="title">${money(b.per_person ? b.amount * n : b.amount)}</div></div>
-        <button class="iconbtn" data-act="del-budget" data-id="${b.id}">✕</button>
+        <button class="iconbtn" data-act="del-budget" data-id="${b.id}" title="Delete" aria-label="Delete ${esc(b.label)}">✕</button>
       </div>`).join('') : `<div class="empty">Add your expected costs to plan the budget.</div>`}
   </div>`;
 }
@@ -507,12 +530,16 @@ function tabExpenses() {
     <div class="panel-head"><h2>All expenses</h2></div>
     ${d.expenses.length ? d.expenses.map((e) => {
       const payer = d.members.find((m) => m.id === e.paid_by);
+      const totW = e.splits.reduce((s, x) => s + x.weight, 0);
+      const myW = e.splits.find((s) => s.member_id === state.member.id)?.weight || 0;
+      const myShare = totW ? (e.amount * myW) / totW : 0;
       return `<div class="item">
         ${payer ? avatar(payer) : ''}
         <div class="grow"><div class="title">${esc(e.description)} <span class="tag">${esc(e.category)}</span></div>
-        <div class="desc">${esc(payer?.name || '?')} paid · split ${e.splits.length} way${e.splits.length === 1 ? '' : 's'}</div></div>
+        <div class="desc">${esc(payer?.name || '?')} paid · split ${e.splits.length} way${e.splits.length === 1 ? '' : 's'}${
+          myShare ? ` · your share ${money(myShare)}` : ''}</div></div>
         <div class="title nowrap">${money(e.amount)}</div>
-        <button class="iconbtn" data-act="del-expense" data-id="${e.id}">✕</button>
+        <button class="iconbtn" data-act="del-expense" data-id="${e.id}" title="Delete" aria-label="Delete expense ${esc(e.description)}">✕</button>
       </div>`;
     }).join('') : `<div class="empty">No expenses logged yet.</div>`}
   </div>`;
@@ -549,7 +576,7 @@ function tabItinerary() {
           <div class="grow"><div class="title">${esc(it.title)}</div>
           ${it.location ? `<div class="desc">📍 ${esc(it.location)}</div>` : ''}
           ${it.notes ? `<div class="desc">${esc(it.notes)}</div>` : ''}</div>
-          <button class="iconbtn" data-act="del-itinerary" data-id="${it.id}">✕</button>
+          <button class="iconbtn" data-act="del-itinerary" data-id="${it.id}" title="Delete" aria-label="Delete ${esc(it.title)}">✕</button>
         </div>`).join('')}
     </div>`).join('') : `<div class="panel"><div class="empty">No plans yet. Add activities to shape each day.</div></div>`}`;
 }
@@ -569,10 +596,10 @@ function tabTasks() {
     ${d.tasks.length ? d.tasks.map((t) => {
       const a = d.members.find((m) => m.id === t.assigned_to);
       return `<div class="task ${t.done ? 'done' : ''}">
-        <div class="checkbox ${t.done ? 'on' : ''}" data-act="toggle-task" data-id="${t.id}">${t.done ? '✓' : ''}</div>
+        <button class="checkbox ${t.done ? 'on' : ''}" data-act="toggle-task" data-id="${t.id}" role="checkbox" aria-checked="${!!t.done}" aria-label="${esc(t.title)}">${t.done ? '✓' : ''}</button>
         <div class="grow title">${esc(t.title)}</div>
         ${a ? `<span class="chip">${avatar(a)} ${esc(a.name)}</span>` : '<span class="tag">unassigned</span>'}
-        <button class="iconbtn" data-act="del-task" data-id="${t.id}">✕</button>
+        <button class="iconbtn" data-act="del-task" data-id="${t.id}" title="Delete" aria-label="Delete task ${esc(t.title)}">✕</button>
       </div>`;
     }).join('') : `<div class="empty">No tasks yet. Add the things that need doing before you go.</div>`}
   </div>`;
@@ -590,7 +617,7 @@ function tabPeople() {
       <div class="item">
         ${avatar(m, 'lg')}
         <div class="grow"><div class="title">${esc(m.name)} ${m.is_organizer ? '<span class="tag">organizer</span>' : ''} ${m.id === state.member.id ? '<span class="tag" style="color:var(--accent)">you</span>' : ''}</div></div>
-        ${m.id !== state.member.id && !m.is_organizer ? `<button class="iconbtn" data-act="del-member" data-id="${m.id}">✕</button>` : ''}
+        ${m.id !== state.member.id && !m.is_organizer ? `<button class="iconbtn" data-act="del-member" data-id="${m.id}" title="Remove" aria-label="Remove ${esc(m.name)}">✕</button>` : ''}
       </div>`).join('')}
     <form data-form="member" class="row mt" style="align-items:flex-end">
       <label class="field" style="flex:1"><span>Add someone manually</span><input name="name" placeholder="Their name" required maxlength="40"/></label>
@@ -799,6 +826,11 @@ document.addEventListener('click', async (e) => {
         return;
       }
       case 'print': window.print(); return;
+      case 'prefill-dest': {
+        const input = $('form[data-form="destination"] input[name="name"]');
+        if (input) { input.value = el.dataset.name; input.focus(); input.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        return;
+      }
       case 'vote-dest':
         await api.post(`/destinations/${id}/vote`, { memberId: state.member.id });
         await refresh(); return;
