@@ -148,5 +148,13 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_expenses_trip ON expenses(trip_id);
     CREATE INDEX IF NOT EXISTS idx_itinerary_trip ON itinerary_items(trip_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_trip ON tasks(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_dates_trip ON date_options(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_budget_trip ON budget_items(trip_id);
+    -- Child-side indexes so ON DELETE CASCADE / SET NULL on members stays fast.
+    CREATE INDEX IF NOT EXISTS idx_dest_votes_member ON destination_votes(member_id);
+    CREATE INDEX IF NOT EXISTS idx_date_votes_member ON date_votes(member_id);
+    CREATE INDEX IF NOT EXISTS idx_splits_member ON expense_splits(member_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_payer ON expenses(paid_by);
+    CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to);
   `);
 }

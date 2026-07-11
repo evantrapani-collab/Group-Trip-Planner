@@ -4,6 +4,10 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
+// The landing page ships as static markup inside index.html so it paints
+// before any JS runs; capture it once so renderHome can restore it.
+const HOME_HTML = app.innerHTML;
+
 /* ----------------------------- API client ----------------------------- */
 const api = {
   async req(method, path, body) {
@@ -53,10 +57,26 @@ const state = {
   code: null,
   trip: null,
   data: null,     // full state snapshot
+  snapshotJson: null, // serialized copy of `data`, for cheap change detection
   member: null,   // my identity in current trip
   tab: 'overview',
   loading: false,
 };
+
+// Single place that commits a fresh server snapshot; keeps a serialized copy
+// so the poll loop can detect changes with one stringify per tick.
+function setSnapshot(data) {
+  state.data = data;
+  state.trip = data.trip;
+  state.snapshotJson = JSON.stringify(data);
+}
+
+const isTyping = () => {
+  const ae = document.activeElement;
+  return !!ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName);
+};
+
+const membersById = () => new Map(state.data.members.map((m) => [m.id, m]));
 
 const memberKey = (tripId) => `tt:member:${tripId}`;
 const saveMember = (tripId, m) => localStorage.setItem(memberKey(tripId), JSON.stringify(m));
@@ -87,14 +107,14 @@ async function loadTrip() {
   render();
   try {
     const data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
-    state.data = data;
-    state.trip = data.trip;
+    setSnapshot(data);
     const stored = loadMember(state.trip.id);
     // Make sure the stored identity still exists server-side.
     state.member = stored && data.members.find((m) => m.id === stored.id) ? stored : null;
   } catch (e) {
     state.data = null;
     state.trip = null;
+    state.snapshotJson = null;
     toast(e.message, true);
   } finally {
     state.loading = false;
@@ -103,16 +123,47 @@ async function loadTrip() {
 
 async function refresh() {
   try {
-    state.data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
-    state.trip = state.data.trip;
+    setSnapshot(await api.get(`/trips/${encodeURIComponent(state.code)}/state`));
   } catch (e) { toast(e.message, true); }
   render();
 }
 
 window.addEventListener('hashchange', navigate);
 
+/* ----------------------------- live sync ------------------------------ */
+// Poll the trip snapshot so everyone sees each other's changes without
+// reloading. Pauses in hidden tabs and never re-renders mid-typing.
+const POLL_MS = 12000;
+let pollTimer = null;
+
+function syncPolling() {
+  const want = state.route === 'trip' && !!state.member && !document.hidden;
+  if (want && !pollTimer) pollTimer = setInterval(pollTick, POLL_MS);
+  if (!want && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollTick() {
+  if (state.route !== 'trip' || !state.member || document.hidden) return;
+  try {
+    const data = await api.get(`/trips/${encodeURIComponent(state.code)}/state`);
+    if (JSON.stringify(data) === state.snapshotJson) return; // nothing new
+    // Don't yank the DOM out from under someone mid-form. State stays
+    // untouched too, so the next tick retries and the update still lands.
+    if (isTyping()) return;
+    setSnapshot(data);
+    render();
+  } catch { /* transient network hiccup — next tick will retry */ }
+}
+
+document.addEventListener('visibilitychange', () => { syncPolling(); if (!document.hidden) pollTick(); });
+
 /* ----------------------------- render --------------------------------- */
+const DEFAULT_TITLE = document.title;
+
 function render() {
+  document.documentElement.classList.remove('booting-trip');
+  syncPolling();
+  document.title = state.route === 'trip' && state.trip ? `${state.trip.name} — TripTogether` : DEFAULT_TITLE;
   if (state.route === 'home') return renderHome();
   if (state.loading && !state.data) return renderShell(`<div class="spin"></div>`);
   if (!state.trip) return renderShell(`<div class="card"><h2>Trip not found</h2><p class="muted">We couldn't find a trip with that code. Double-check the link, or start a new one.</p><a class="btn primary mt" href="#/">Go home</a></div>`);
@@ -135,47 +186,8 @@ function renderShell(content) {
 
 /* ------- home ------- */
 function renderHome() {
-  app.innerHTML = topbar() + `
-  <div class="container">
-    <section class="hero">
-      <h1>Plan your group trip<br/><span class="grad">without the group chat chaos</span></h1>
-      <p class="lead">Collect destination ideas and vote, find dates that work for everyone, set a budget, split expenses fairly, and build a shared itinerary — all in one place.</p>
-    </section>
-
-    <div class="home-cards">
-      <div class="card">
-        <h2>Start a new trip</h2>
-        <p class="sub">Create a trip and get a code to share with your crew.</p>
-        <form data-form="create">
-          <label class="field"><span>Trip name</span><input name="name" placeholder="Summer in Lisbon" required maxlength="80" /></label>
-          <label class="field"><span>Your name</span><input name="organizerName" placeholder="Alex" required maxlength="40" /></label>
-          <label class="field"><span>Description (optional)</span><input name="description" placeholder="A week of sun, food & friends" maxlength="160" /></label>
-          <button class="btn primary block" type="submit">Create trip →</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>Join a trip</h2>
-        <p class="sub">Got a 6-letter code from a friend? Hop in.</p>
-        <form data-form="join">
-          <label class="field"><span>Trip code</span><input name="code" placeholder="ABC123" required maxlength="6" style="text-transform:uppercase;letter-spacing:3px;font-weight:700" /></label>
-          <label class="field"><span>Your name</span><input name="name" placeholder="Sam" required maxlength="40" /></label>
-          <button class="btn block" type="submit">Join trip</button>
-        </form>
-      </div>
-    </div>
-
-    <div class="feature-grid">
-      ${[
-        ['🗳️', 'Vote on destinations', 'Everyone pitches ideas. Upvotes surface the favorite — then lock it in.'],
-        ['📅', 'Find the right dates', 'Propose date ranges and let people mark yes / maybe / no.'],
-        ['💰', 'Budget together', 'Set a target and break it down by flights, stay, food and more.'],
-        ['🧾', 'Split expenses fairly', 'Log who paid for what. We compute the simplest way to settle up.'],
-        ['🗺️', 'Build an itinerary', 'A shared day-by-day plan so nobody misses the good stuff.'],
-        ['✅', 'Share the to-dos', 'Assign tasks and packing items so nothing slips through.'],
-      ].map(([i, h, p]) => `<div class="feature"><div class="ico">${i}</div><h3>${h}</h3><p>${p}</p></div>`).join('')}
-    </div>
-    <p class="empty">Built for friends, families and coworkers who'd rather travel than coordinate. 💛</p>
-  </div>`;
+  // The landing page lives in index.html (static, instant first paint).
+  app.innerHTML = HOME_HTML;
 }
 
 /* ------- join existing trip ------- */
@@ -229,22 +241,24 @@ function renderTrip() {
         <div class="meta">${t.description ? esc(t.description) + ' · ' : ''}${
           t.start_date ? esc(fmtRange(t.start_date, t.end_date)) + ' · ' : ''
         }${d.members.length} traveler${d.members.length === 1 ? '' : 's'}</div>
+        <div class="avatars mt-sm">${d.members.slice(0, 10).map((m) => avatar(m)).join('')}${
+          d.members.length > 10 ? `<span class="muted" style="margin-left:6px;font-size:13px">+${d.members.length - 10}</span>` : ''}</div>
       </div>
       <div class="share-pill" data-act="copy-share" title="Click to copy invite link">
         <span class="faint">CODE</span><code>${esc(t.share_code)}</code><span class="faint">📋</span>
       </div>
     </div>
 
-    <div class="tabs">
-      ${TABS.map(([k, label]) => {
+    <div class="tabs" role="tablist" aria-label="Trip sections">
+      ${TABS.map(([k, label], i) => {
         const c = tabCount(k);
-        return `<button class="tab ${state.tab === k ? 'active' : ''}" data-tab="${k}">${label}${
+        return `<button class="tab ${state.tab === k ? 'active' : ''}" role="tab" aria-selected="${state.tab === k}" data-tab="${k}" title="Shortcut: ${i + 1}">${label}${
           c ? `<span class="badge">${c}</span>` : ''
         }</button>`;
       }).join('')}
     </div>
 
-    <div id="tabview">${renderTab()}</div>
+    <div id="tabview" role="tabpanel">${renderTab()}</div>
   </div>`;
 }
 
@@ -263,6 +277,18 @@ function renderTab() {
 }
 
 /* ---- Overview ---- */
+function tripCountdown(t) {
+  if (!t.start_date) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(t.start_date + 'T00:00');
+  const end = new Date((t.end_date || t.start_date) + 'T00:00');
+  const days = Math.round((start - today) / 86400000);
+  if (days > 0) return { big: `${days} day${days === 1 ? '' : 's'}`, sub: 'until departure 🛫' };
+  if (today <= end) return { big: 'In progress', sub: 'enjoy the trip! 🌴' };
+  return { big: 'Wrapped up', sub: 'hope it was great 📸' };
+}
+
 function tabOverview() {
   const d = state.data;
   const chosen = d.destinations.find((x) => x.id === d.trip.chosen_destination_id);
@@ -281,8 +307,11 @@ function tabOverview() {
     ['💸 Your balance', `<span class="${myBal >= 0 ? 'bal-pos' : 'bal-neg'}">${myBal >= 0 ? '+' : ''}${money(myBal)}</span>`, myBal >= 0 ? "you're owed" : 'you owe'],
   ];
 
+  const cd = tripCountdown(d.trip);
+
   return `
   ${chosen ? `<div class="winner-banner">🎉 <b>${esc(chosen.name)}</b> is the chosen destination! Time to make it happen.</div>` : ''}
+  ${cd ? `<div class="countdown"><div class="cd-big">${cd.big}</div><div class="cd-sub">${cd.sub}${chosen ? ` · ${esc(chosen.name)}` : ''}</div></div>` : ''}
   <div class="stat-grid">
     ${cards.map(([k, v, s]) => `<div class="stat"><div class="k">${k}</div><div class="bigstat" style="font-size:22px">${v}</div><div class="muted" style="font-size:13px">${s}</div></div>`).join('')}
   </div>
@@ -299,15 +328,18 @@ function tabOverview() {
       <div class="panel-head"><h2><span class="ico">✅</span> Open tasks <span class="badge">${openTasks}</span></h2><button class="btn sm" data-tab="tasks">Open tasks</button></div>
       ${d.tasks.filter((t) => !t.done).slice(0, 6).map((t) => {
         const a = d.members.find((m) => m.id === t.assigned_to);
-        return `<div class="task"><div class="checkbox" data-act="toggle-task" data-id="${t.id}"></div><div class="grow title">${esc(t.title)}</div>${a ? avatar(a) : ''}</div>`;
+        return `<div class="task"><button class="checkbox" data-act="toggle-task" data-id="${t.id}" role="checkbox" aria-checked="false" aria-label="${esc(t.title)}"></button><div class="grow title">${esc(t.title)}</div>${a ? avatar(a) : ''}</div>`;
       }).join('') || `<div class="empty">Nothing to do — nice. 🎉</div>`}
     </div>
   </div>`;
 }
 
 /* ---- Destinations ---- */
+const IDEA_CHIPS = ['Lisbon, Portugal', 'Tokyo, Japan', 'Mexico City, Mexico', 'Barcelona, Spain', 'Bali, Indonesia', 'New Orleans, USA'];
+
 function tabDestinations() {
   const d = state.data;
+  const byId = membersById();
   const sorted = [...d.destinations].sort((a, b) => b.voters.length - a.voters.length);
   const maxVotes = sorted[0]?.voters.length || 0;
   return `
@@ -334,21 +366,36 @@ function tabDestinations() {
         <div class="grow">
           <div class="title">${esc(dest.name)} ${isChosen ? '<span class="tag" style="color:var(--accent);border-color:var(--accent)">CHOSEN</span>' : isLeader && maxVotes ? '<span class="tag">leading</span>' : ''}</div>
           ${dest.description ? `<div class="desc">${esc(dest.description)}</div>` : ''}
-          <div class="faint" style="font-size:12px;margin-top:4px">${dest.est_cost ? '~' + money(dest.est_cost) + '/person' : ''}</div>
+          <div class="flex" style="margin-top:5px;gap:8px">
+            ${dest.voters.length ? `<span class="avatars sm">${dest.voters.map((vid) => byId.get(vid)).filter(Boolean).map((m) => avatar(m, 'sm')).join('')}</span>` : ''}
+            <span class="faint" style="font-size:12px">${dest.est_cost ? '~' + money(dest.est_cost) + '/person' : ''}${
+              dest.proposed_by && byId.get(dest.proposed_by) ? `${dest.est_cost ? ' · ' : ''}idea by ${esc(byId.get(dest.proposed_by).name)}` : ''}</span>
+          </div>
         </div>
         <div class="flex">
           <button class="btn sm ${isChosen ? '' : 'ghost'}" data-act="choose-dest" data-id="${isChosen ? '' : dest.id}">${isChosen ? '✓ Chosen' : 'Choose'}</button>
-          <button class="iconbtn" data-act="del-dest" data-id="${dest.id}" title="Delete">✕</button>
+          <button class="iconbtn" data-act="del-dest" data-id="${dest.id}" title="Delete" aria-label="Delete ${esc(dest.name)}">✕</button>
         </div>
       </div>`;
-    }).join('') : `<div class="empty">No ideas yet — be the first to suggest a destination! ✨</div>`}
+    }).join('') : `
+      <div class="empty">No ideas yet — be the first to suggest a destination! ✨<br/>
+        <span class="chips">${IDEA_CHIPS.map((c) => `<button class="chipbtn" data-act="prefill-dest" data-name="${esc(c)}">${esc(c)}</button>`).join('')}</span>
+      </div>`}
   </div>`;
 }
 
 /* ---- Dates ---- */
 function tabDates() {
   const d = state.data;
+  const byId = membersById();
   const opts = d.dateOptions;
+  const votersFor = (o, resp) => o.votes.filter((v) => v.response === resp).map((v) => byId.get(v.member_id)).filter(Boolean);
+  const cell = (o, resp, cls) => {
+    const vs = votersFor(o, resp);
+    const names = vs.map((m) => m.name).join(', ');
+    return `<td title="${esc(names)}"><span class="${cls}">${vs.length}</span>${
+      vs.length ? `<div class="avatars sm center">${vs.slice(0, 5).map((m) => avatar(m, 'sm')).join('')}${vs.length > 5 ? `<span class="faint" style="font-size:11px">+${vs.length - 5}</span>` : ''}</div>` : ''}</td>`;
+  };
   return `
   <div class="panel">
     <div class="panel-head"><h2><span class="ico">📅</span> When works for everyone?</h2></div>
@@ -371,13 +418,13 @@ function tabDates() {
           const isSet = d.trip.start_date === o.start_date && d.trip.end_date === o.end_date;
           return `<tr>
             <td><b>${esc(fmtRange(o.start_date, o.end_date))}</b> ${isWinner ? '<span class="tag">top</span>' : ''} ${isSet ? '<span class="tag" style="color:var(--accent)">set</span>' : ''}</td>
-            <td><span class="bal-pos">${counts.yes}</span></td>
-            <td><span style="color:var(--warn)">${counts.maybe}</span></td>
-            <td><span class="bal-neg">${counts.no}</span></td>
+            ${cell(o, 'yes', 'bal-pos')}
+            ${cell(o, 'maybe', 'warn-txt')}
+            ${cell(o, 'no', 'bal-neg')}
             <td><div class="resp">
-              ${['yes', 'maybe', 'no'].map((r) => `<button class="${mine === r ? 'on ' + r : ''}" data-act="vote-date" data-id="${o.id}" data-resp="${r}" title="${r}">${{ yes: '👍', maybe: '🤔', no: '👎' }[r]}</button>`).join('')}
+              ${['yes', 'maybe', 'no'].map((r) => `<button class="${mine === r ? 'on ' + r : ''}" data-act="vote-date" data-id="${o.id}" data-resp="${r}" title="${r}" aria-label="Vote ${r}" aria-pressed="${mine === r}">${{ yes: '👍', maybe: '🤔', no: '👎' }[r]}</button>`).join('')}
             </div></td>
-            <td class="nowrap"><button class="btn sm ghost" data-act="set-dates" data-id="${o.id}">Set</button> <button class="iconbtn" data-act="del-date" data-id="${o.id}">✕</button></td>
+            <td class="nowrap"><button class="btn sm ghost" data-act="set-dates" data-id="${o.id}">Set</button> <button class="iconbtn" data-act="del-date" data-id="${o.id}" title="Delete" aria-label="Delete date option">✕</button></td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -399,6 +446,18 @@ function tabBudget() {
   });
   const pct = target ? Math.min(100, (total / target) * 100) : 0;
   const spentPct = target ? Math.min(100, (spent / target) * 100) : 0;
+  const CAT_COLORS = { Flights: '#6366f1', Accommodation: '#8b5cf6', Food: '#f59e0b', Transport: '#14b8a6', Activities: '#ec4899', Other: '#64748b' };
+  const cats = total > 0 ? Object.entries(byCat).sort((a, b) => b[1] - a[1]) : [];
+  const catBars = cats.length ? `
+    <div class="panel">
+      <div class="panel-head"><h2><span class="ico">📊</span> Where the money goes</h2></div>
+      <div class="catbar" role="img" aria-label="Budget by category">
+        ${cats.map(([c, amt]) => `<i style="width:${(amt / total) * 100}%;background:${CAT_COLORS[c] || CAT_COLORS.Other}" title="${esc(c)}: ${money(amt)}"></i>`).join('')}
+      </div>
+      <div class="cat-legend">
+        ${cats.map(([c, amt]) => `<span class="cat-key"><i style="background:${CAT_COLORS[c] || CAT_COLORS.Other}"></i>${esc(c)} <b>${money(amt)}</b> <span class="faint">${Math.round((amt / total) * 100)}%</span></span>`).join('')}
+      </div>
+    </div>` : '';
   return `
   <div class="stat-grid">
     <div class="stat"><div class="k">Target budget</div><div class="bigstat">${target ? money(target) : '—'}</div>
@@ -416,6 +475,8 @@ function tabBudget() {
     <div class="stat"><div class="k">Per person (planned)</div><div class="bigstat">${money(total / n)}</div><div class="muted" style="font-size:13px">${n} traveler${n === 1 ? '' : 's'}</div></div>
   </div>
 
+  ${catBars}
+
   <div class="panel">
     <div class="panel-head"><h2><span class="ico">💰</span> Budget breakdown</h2></div>
     <form data-form="budget" class="row" style="align-items:flex-end">
@@ -432,7 +493,7 @@ function tabBudget() {
         <div class="grow"><div class="title">${esc(b.label)} <span class="tag">${esc(b.category)}</span></div>
         <div class="desc">${b.per_person ? `${money(b.amount)} × ${n} people` : 'total'}</div></div>
         <div class="right"><div class="title">${money(b.per_person ? b.amount * n : b.amount)}</div></div>
-        <button class="iconbtn" data-act="del-budget" data-id="${b.id}">✕</button>
+        <button class="iconbtn" data-act="del-budget" data-id="${b.id}" title="Delete" aria-label="Delete ${esc(b.label)}">✕</button>
       </div>`).join('') : `<div class="empty">Add your expected costs to plan the budget.</div>`}
   </div>`;
 }
@@ -483,12 +544,16 @@ function tabExpenses() {
     <div class="panel-head"><h2>All expenses</h2></div>
     ${d.expenses.length ? d.expenses.map((e) => {
       const payer = d.members.find((m) => m.id === e.paid_by);
+      const totW = e.splits.reduce((s, x) => s + x.weight, 0);
+      const myW = e.splits.find((s) => s.member_id === state.member.id)?.weight || 0;
+      const myShare = totW ? (e.amount * myW) / totW : 0;
       return `<div class="item">
         ${payer ? avatar(payer) : ''}
         <div class="grow"><div class="title">${esc(e.description)} <span class="tag">${esc(e.category)}</span></div>
-        <div class="desc">${esc(payer?.name || '?')} paid · split ${e.splits.length} way${e.splits.length === 1 ? '' : 's'}</div></div>
+        <div class="desc">${esc(payer?.name || '?')} paid · split ${e.splits.length} way${e.splits.length === 1 ? '' : 's'}${
+          myShare ? ` · your share ${money(myShare)}` : ''}</div></div>
         <div class="title nowrap">${money(e.amount)}</div>
-        <button class="iconbtn" data-act="del-expense" data-id="${e.id}">✕</button>
+        <button class="iconbtn" data-act="del-expense" data-id="${e.id}" title="Delete" aria-label="Delete expense ${esc(e.description)}">✕</button>
       </div>`;
     }).join('') : `<div class="empty">No expenses logged yet.</div>`}
   </div>`;
@@ -502,7 +567,12 @@ function tabItinerary() {
   const keys = Object.keys(groups);
   return `
   <div class="panel">
-    <div class="panel-head"><h2><span class="ico">🗺️</span> Build the itinerary</h2></div>
+    <div class="panel-head"><h2><span class="ico">🗺️</span> Build the itinerary</h2>
+      <div class="flex">
+        <button class="btn sm ghost" data-act="export-ics" title="Download .ics for Google/Apple Calendar">📆 Export to calendar</button>
+        <button class="btn sm ghost" data-act="print" title="Print or save as PDF">🖨️ Print</button>
+      </div>
+    </div>
     <form data-form="itinerary" class="row" style="align-items:flex-end">
       <label class="field" style="flex:none"><span>Day</span><input name="day" placeholder="Day 1" maxlength="30" style="width:90px"/></label>
       <label class="field" style="flex:none"><span>Time</span><input name="time" type="time" style="width:120px"/></label>
@@ -520,7 +590,7 @@ function tabItinerary() {
           <div class="grow"><div class="title">${esc(it.title)}</div>
           ${it.location ? `<div class="desc">📍 ${esc(it.location)}</div>` : ''}
           ${it.notes ? `<div class="desc">${esc(it.notes)}</div>` : ''}</div>
-          <button class="iconbtn" data-act="del-itinerary" data-id="${it.id}">✕</button>
+          <button class="iconbtn" data-act="del-itinerary" data-id="${it.id}" title="Delete" aria-label="Delete ${esc(it.title)}">✕</button>
         </div>`).join('')}
     </div>`).join('') : `<div class="panel"><div class="empty">No plans yet. Add activities to shape each day.</div></div>`}`;
 }
@@ -540,10 +610,10 @@ function tabTasks() {
     ${d.tasks.length ? d.tasks.map((t) => {
       const a = d.members.find((m) => m.id === t.assigned_to);
       return `<div class="task ${t.done ? 'done' : ''}">
-        <div class="checkbox ${t.done ? 'on' : ''}" data-act="toggle-task" data-id="${t.id}">${t.done ? '✓' : ''}</div>
+        <button class="checkbox ${t.done ? 'on' : ''}" data-act="toggle-task" data-id="${t.id}" role="checkbox" aria-checked="${!!t.done}" aria-label="${esc(t.title)}">${t.done ? '✓' : ''}</button>
         <div class="grow title">${esc(t.title)}</div>
         ${a ? `<span class="chip">${avatar(a)} ${esc(a.name)}</span>` : '<span class="tag">unassigned</span>'}
-        <button class="iconbtn" data-act="del-task" data-id="${t.id}">✕</button>
+        <button class="iconbtn" data-act="del-task" data-id="${t.id}" title="Delete" aria-label="Delete task ${esc(t.title)}">✕</button>
       </div>`;
     }).join('') : `<div class="empty">No tasks yet. Add the things that need doing before you go.</div>`}
   </div>`;
@@ -561,7 +631,7 @@ function tabPeople() {
       <div class="item">
         ${avatar(m, 'lg')}
         <div class="grow"><div class="title">${esc(m.name)} ${m.is_organizer ? '<span class="tag">organizer</span>' : ''} ${m.id === state.member.id ? '<span class="tag" style="color:var(--accent)">you</span>' : ''}</div></div>
-        ${m.id !== state.member.id && !m.is_organizer ? `<button class="iconbtn" data-act="del-member" data-id="${m.id}">✕</button>` : ''}
+        ${m.id !== state.member.id && !m.is_organizer ? `<button class="iconbtn" data-act="del-member" data-id="${m.id}" title="Remove" aria-label="Remove ${esc(m.name)}">✕</button>` : ''}
       </div>`).join('')}
     <form data-form="member" class="row mt" style="align-items:flex-end">
       <label class="field" style="flex:1"><span>Add someone manually</span><input name="name" placeholder="Their name" required maxlength="40"/></label>
@@ -574,6 +644,91 @@ function tabPeople() {
     </div>
   </div>`;
 }
+
+/* ----------------------------- extras --------------------------------- */
+// Build an iCalendar file from the itinerary. Items whose "Day" contains a
+// number (e.g. "Day 2") are anchored to the trip's start date; timed items
+// become 1-hour events, the rest are all-day.
+function buildIcs() {
+  const t = state.trip;
+  if (!t.start_date) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const escIcs = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TripTogether//EN', `X-WR-CALNAME:${escIcs(t.name)}`];
+  let count = 0;
+  for (const it of state.data.itinerary) {
+    // Only "Day N"-style labels map unambiguously onto the trip's dates;
+    // free-text like "August 21" is skipped rather than mis-placed.
+    const dayNum = /day\s*(\d+)/i.exec(it.day || '');
+    if (!dayNum || Number(dayNum[1]) < 1 || Number(dayNum[1]) > 365) continue;
+    const date = new Date(t.start_date + 'T00:00');
+    date.setDate(date.getDate() + Number(dayNum[1]) - 1);
+    const ymd = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+    lines.push('BEGIN:VEVENT', `UID:${it.id}@triptogether`, `SUMMARY:${escIcs(it.title)}`);
+    if (it.location) lines.push(`LOCATION:${escIcs(it.location)}`);
+    if (it.notes) lines.push(`DESCRIPTION:${escIcs(it.notes)}`);
+    const hm = /^(\d{2}):(\d{2})/.exec(it.time || '');
+    if (hm) {
+      // Floating local time — correct wherever the trip happens.
+      lines.push(`DTSTART:${ymd}T${hm[1]}${hm[2]}00`);
+      const end = new Date(date); end.setHours(Number(hm[1]) + 1, Number(hm[2]));
+      lines.push(`DTEND:${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}T${pad(end.getHours())}${pad(end.getMinutes())}00`);
+    } else {
+      const next = new Date(date); next.setDate(next.getDate() + 1);
+      lines.push(`DTSTART;VALUE=DATE:${ymd}`, `DTEND;VALUE=DATE:${next.getFullYear()}${pad(next.getMonth() + 1)}${pad(next.getDate())}`);
+    }
+    lines.push('END:VEVENT');
+    count++;
+  }
+  lines.push('END:VCALENDAR');
+  return count ? { text: lines.join('\r\n'), count } : { text: null, count: 0 };
+}
+
+function downloadFile(name, text, type = 'text/calendar') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// A brief celebratory burst when the group locks in a destination.
+function confetti() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const c = document.createElement('canvas');
+  Object.assign(c.style, { position: 'fixed', inset: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 99 });
+  c.width = innerWidth; c.height = innerHeight;
+  document.body.appendChild(c);
+  const ctx = c.getContext('2d');
+  const colors = ['#6366f1', '#8b5cf6', '#14b8a6', '#f59e0b', '#ec4899', '#10b981'];
+  const parts = Array.from({ length: 120 }, () => ({
+    x: c.width / 2, y: c.height * 0.4,
+    vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 12 - 3,
+    s: Math.random() * 7 + 3, r: Math.random() * Math.PI,
+    col: colors[Math.random() * colors.length | 0],
+  }));
+  const t0 = performance.now();
+  (function frame(now) {
+    const dt = (now - t0) / 1600;
+    ctx.clearRect(0, 0, c.width, c.height);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.35; p.r += 0.1;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+      ctx.globalAlpha = Math.max(0, 1 - dt);
+      ctx.fillStyle = p.col; ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6);
+      ctx.restore();
+    }
+    if (dt < 1) requestAnimationFrame(frame); else c.remove();
+  })(t0);
+}
+
+// Number keys 1–8 jump between tabs when you're not typing.
+document.addEventListener('keydown', (e) => {
+  if (state.route !== 'trip' || !state.member) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (isTyping()) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= TABS.length) { state.tab = TABS[n - 1][0]; render(); }
+});
 
 /* ----------------------------- events --------------------------------- */
 const formData = (form) => {
@@ -669,8 +824,28 @@ document.addEventListener('click', async (e) => {
       case 'home': location.hash = '#/'; return;
       case 'copy-share': {
         const url = `${location.origin}/#/trip/${state.trip.share_code}`;
-        await navigator.clipboard.writeText(url).catch(() => {});
-        toast('Invite link copied to clipboard!');
+        // Touch devices get the native share sheet; elsewhere the pill does
+        // what its tooltip promises and copies the link.
+        if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+          await navigator.share({ title: `Join "${state.trip.name}" on TripTogether`, url }).catch(() => {});
+          return;
+        }
+        const copied = await navigator.clipboard.writeText(url).then(() => true, () => false);
+        toast(copied ? 'Invite link copied to clipboard!' : `Share this link: ${url}`, !copied);
+        return;
+      }
+      case 'export-ics': {
+        const ics = buildIcs();
+        if (!ics) return toast('Set the trip dates first (Dates tab → “Set”), then export.', true);
+        if (!ics.count) return toast('Name itinerary days like “Day 1”, “Day 2” so they can be placed on the calendar.', true);
+        downloadFile(`${state.trip.name.replace(/[^\w-]+/g, '-').toLowerCase()}.ics`, ics.text);
+        toast(`Exported ${ics.count} event${ics.count === 1 ? '' : 's'} — import the file into your calendar.`);
+        return;
+      }
+      case 'print': window.print(); return;
+      case 'prefill-dest': {
+        const input = $('form[data-form="destination"] input[name="name"]');
+        if (input) { input.value = el.dataset.name; input.focus(); input.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
         return;
       }
       case 'vote-dest':
@@ -679,6 +854,7 @@ document.addEventListener('click', async (e) => {
       case 'choose-dest':
         await api.patch(`/trips/${tripId}`, { chosen_destination_id: id || null });
         toast(id ? 'Destination locked in! 🎉' : 'Choice cleared.');
+        if (id) confetti();
         await refresh(); return;
       case 'del-dest':
         if (!confirm('Delete this destination?')) return;
