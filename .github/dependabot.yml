@@ -1,0 +1,23 @@
+# Keeps the CI action pins current.
+#
+# The workflows here pin actions/checkout@v4 and friends, several majors
+# behind, with nothing watching them. trapani-financial-data was the only repo
+# in the org with Dependabot configured, which is why it was the only one on a
+# current checkout.
+#
+# Monthly and grouped, so this is one PR to glance at rather than a trickle.
+#
+# github-actions only for now. A pip/npm block can be added once the manifest
+# to point it at is confirmed -- pointing Dependabot at a file that does not
+# exist just produces a config error on the repo.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
