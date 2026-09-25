@@ -386,6 +386,13 @@ export function createApp({ dbFile } = {}) {
   app.use('/api', api);
   // Unknown API routes get JSON, not the SPA fallback HTML.
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
+  // Express 5 forwards rejected promises from async handlers here; keep API
+  // errors (including malformed JSON bodies) as JSON instead of HTML.
+  app.use('/api', (err, _req, res, _next) => {
+    const status = err.status || err.statusCode || 500;
+    if (status >= 500) console.error(err);
+    res.status(status).json({ error: status >= 500 ? 'Internal error' : err.message });
+  });
 
   // Static SPA. Assets revalidate via ETag with a short freshness window;
   // HTML is always revalidated so deploys show up immediately.
