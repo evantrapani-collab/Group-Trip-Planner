@@ -121,6 +121,23 @@ test('unknown API route returns JSON 404, not SPA HTML', async () => {
   assert.equal(r.body.error, 'Not found');
 });
 
+test('malformed JSON body returns a JSON 400', async () => {
+  const res = await fetch(base + '/trips', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{not json',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.headers.get('content-type'), /json/);
+});
+
+test('non-API deep links fall back to the SPA index', async () => {
+  const res = await fetch(base.replace(/\/api$/, '') + '/trip/ABC123/expenses');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /html/);
+  assert.equal(res.headers.get('cache-control'), 'no-cache');
+});
+
 test('state groups votes and splits under the right parents', async () => {
   const c = await call('POST', '/trips', { name: 'Grouping', organizerName: 'A' });
   const tid = c.body.trip.id;
