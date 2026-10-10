@@ -69,37 +69,12 @@ npm test
 
 ## Deploy it to the web
 
-The app is a single Node server, so it runs anywhere that runs a container. The
-one important detail is a **persistent disk/volume** for the SQLite file
-(`/data/trips.db`) so trips survive restarts and redeploys. Configs for the most
-common hosts are included.
+The app is a single Node server packaged by the included [`Dockerfile`](./Dockerfile),
+so it runs anywhere that runs a container. The one detail that matters is a
+**persistent disk/volume mounted at `/data`**: the SQLite file lives at
+`/data/trips.db`, and without a volume every trip is lost on restart or redeploy.
 
-### Option A — Render (recommended, free, click-based)
-
-1. Push this repo to GitHub (already done if you're reading this there).
-2. Sign in at [render.com](https://render.com) and choose **New + → Blueprint**.
-3. Pick this repo. Render reads [`render.yaml`](./render.yaml) and configures the
-   service for you on the **free** plan — no credit card needed.
-4. Click apply, wait for the first build (~2 min), and you get a public
-   `https://…onrender.com` URL to share with your group.
-
-> The free plan is perfect for testing. Two caveats: the app sleeps after ~15 min
-> of inactivity (a few-second cold start on the next visit), and it has **no
-> persistent disk**, so trips reset whenever it redeploys. When you're ready for
-> real, lasting trips, follow the commented instructions in `render.yaml` to switch
-> to the Starter plan (~$7/mo) with a persistent disk.
-
-### Option B — Fly.io (free tier includes a volume)
-
-```bash
-fly launch --no-deploy --copy-config --name <your-unique-name>
-fly volumes create trip_data --size 1 --region iad
-fly deploy
-```
-
-[`fly.toml`](./fly.toml) is preconfigured; the app scales to zero when idle.
-
-### Option C — Docker (anywhere)
+### Docker (any machine or VPS)
 
 ```bash
 docker build -t triptogether .
@@ -107,8 +82,25 @@ docker run -p 3000:3000 -v triptogether-data:/data triptogether
 # → http://localhost:3000
 ```
 
-The named volume `triptogether-data` keeps your database between runs. This same
-image is what Render (via the Dockerfile) and any VPS would run.
+The named volume `triptogether-data` keeps your database between runs.
+
+### Hosted container platforms (Render, Fly.io, Railway, …)
+
+This repo carries **no platform config files**. `render.yaml` and `fly.toml` were
+removed in September 2026 because the app is not deployed anywhere, so there is no
+one-click blueprint to import. Any host that builds from a Dockerfile works; give it
+three things:
+
+| Setting | Value |
+|---|---|
+| Build | from the repo's `Dockerfile` |
+| Port | `3000` (the image sets `PORT=3000` and `HOST=0.0.0.0`) |
+| Persistent volume | mounted at `/data` |
+
+A plan with no persistent disk will still start: if `/data` cannot be used the server
+falls back to a temp directory, and then to an in-memory database, logging a warning
+either way. That is fine for a demo and wrong for a real trip, because the data does
+not survive a redeploy.
 
 ## How it works
 
